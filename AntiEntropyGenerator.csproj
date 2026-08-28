@@ -1,0 +1,88 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>AntiEntropyGenerator</AssemblyName>
+    <RootNamespace>AntiEntropyGenerator</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <AssemblyTitle>ONI-Anti-Entropy-Generator</AssemblyTitle>
+    <Product>反熵发电机</Product>
+    <Version>1.0.0</Version>
+    <DebugType>none</DebugType>
+    <NoWarn>CS0436;CS0618</NoWarn>
+
+    <!-- Steam / local install of Oxygen Not Included. Override with /p:ManagedDir=... -->
+    <ManagedDir Condition="'$(ManagedDir)' == ''">$(HOME)/Library/Application Support/Steam/steamapps/common/OxygenNotIncluded/OxygenNotIncluded.app/Contents/Resources/Data/Managed</ManagedDir>
+    <LocalModDir Condition="'$(LocalModDir)' == ''">$(HOME)/Library/Application Support/unity.Klei.Oxygen Not Included/mods/Local/ONI-Anti-Entropy-Generator</LocalModDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="src/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AnimAsset Include="anim/assets/**/*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(ManagedDir)/Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>$(ManagedDir)/Assembly-CSharp-firstpass.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(ManagedDir)/0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedDir)/UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ManagedDir)/UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(ManagedDir)/UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>$(ManagedDir)/UnityEngine.UIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(ManagedDir)/UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(ManagedDir)/UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(ManagedDir)/Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <Target Name="DeployLocalMod" AfterTargets="Build">
+    <MakeDir Directories="$(LocalModDir)" />
+    <MakeDir Directories="$(LocalModDir)/anim/assets" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(LocalModDir)" />
+    <Copy SourceFiles="mod.yaml;mod_info.yaml" DestinationFolder="$(LocalModDir)" />
+    <Copy SourceFiles="@(AnimAsset)" DestinationFiles="@(AnimAsset->'$(LocalModDir)/anim/assets/%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="README.md" DestinationFolder="$(LocalModDir)" Condition="Exists('README.md')" />
+    <Copy SourceFiles="@(TranslationFiles)" DestinationFolder="$(LocalModDir)/translations" Condition="'@(TranslationFiles)' != ''" />
+  </Target>
+
+</Project>
