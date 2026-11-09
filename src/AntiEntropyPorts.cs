@@ -9,11 +9,13 @@ namespace AntiEntropyGenerator
     /// </summary>
     public sealed class AntiEntropyInputPorts : KMonoBehaviour, ISecondaryInput
     {
+        // Offsets are relative to the building origin. For a 4-wide building the footprint
+        // starts one cell left of the origin (PlacementOffsets -1..2).
         public ConduitPortInfo liquidInput =
-            new ConduitPortInfo(ConduitType.Liquid, new CellOffset(0, 0));
+            new ConduitPortInfo(ConduitType.Liquid, new CellOffset(-1, 0));
 
         public ConduitPortInfo gasInput =
-            new ConduitPortInfo(ConduitType.Gas, new CellOffset(0, 2));
+            new ConduitPortInfo(ConduitType.Gas, new CellOffset(-1, 2));
 
         private Building building;
         private FlowUtilityNetwork.NetworkItem liquidItem;
@@ -97,10 +99,10 @@ namespace AntiEntropyGenerator
     public sealed class AntiEntropyOutputPorts : KMonoBehaviour, ISecondaryOutput
     {
         public ConduitPortInfo liquidOutput =
-            new ConduitPortInfo(ConduitType.Liquid, new CellOffset(3, 0));
+            new ConduitPortInfo(ConduitType.Liquid, new CellOffset(2, 0));
 
         public ConduitPortInfo gasOutput =
-            new ConduitPortInfo(ConduitType.Gas, new CellOffset(3, 2));
+            new ConduitPortInfo(ConduitType.Gas, new CellOffset(2, 2));
 
         private Building building;
         private FlowUtilityNetwork.NetworkItem liquidItem;

@@ -29,6 +29,7 @@ WORLD_BOUNDS = (30.0, -326.0, 843.0, 679.0)
 UI_BOUNDS = (10.0, -120.0, 270.0, 230.0)
 
 WORLD_NAME = "world"
+WORKING_NAME = "working"
 OFF_NAME = "off"
 PLACE_NAME = "place"
 UI_NAME = "ui"
@@ -231,12 +232,29 @@ def hex_points(cx, cy, radius, rot=math.pi / 6):
 # world frame
 # ---------------------------------------------------------------------------
 
-def draw_frame(index: int, dim: bool = False) -> Image.Image:
+def gear_polygon(cx, cy, r_root, r_tip, teeth, angle):
+    """Outline of a spur gear: alternating root and tooth-tip arcs."""
+    pts = []
+    step = 2 * math.pi / teeth
+    for i in range(teeth):
+        a0 = angle + i * step
+        a1 = a0 + step
+        pts.append((cx + math.cos(a0) * r_root, cy + math.sin(a0) * r_root))
+        pts.append((cx + math.cos(a0 + step * 0.10) * r_tip,
+                    cy + math.sin(a0 + step * 0.10) * r_tip))
+        pts.append((cx + math.cos(a1 - step * 0.10) * r_tip,
+                    cy + math.sin(a1 - step * 0.10) * r_tip))
+        pts.append((cx + math.cos(a1) * r_root, cy + math.sin(a1) * r_root))
+    return pts
+
+
+def draw_frame(index: int, dim: bool = False, working: bool = True) -> Image.Image:
     W, H = FRAME_W * S, FRAME_H * S
     size = (W, H)
     img = Image.new("RGBA", size, (0, 0, 0, 0))
 
-    phase = index / COUNT
+    phase = (index / COUNT) if working else 0.0
+    angle = 2 * math.pi * phase
     pulse = 0.5 + 0.5 * math.sin(2 * math.pi * phase)
 
     # --- palette ---------------------------------------------------------
@@ -728,6 +746,191 @@ def draw_frame(index: int, dim: bool = False) -> Image.Image:
         d.ellipse([px - sc(3), py - sc(3), px + sc(3), py + sc(3)],
                   fill=(230, 255, 250, 255) if not dim else (46, 70, 72, 255))
 
+    # --- mechanical transmission: flywheel, pistons, gauges -------------
+    d = ImageDraw.Draw(img)
+    steel_dark = (22, 31, 42, 255)
+    steel_mid = (64, 81, 100, 255)
+    steel_hi = (166, 192, 216, 255)
+    bronze_mid = (176, 132, 70, 255)
+    bronze_hi = (255, 226, 166, 255)
+
+    # moving coolant slugs in the vertical brass pipes
+    if working and not dim:
+        for px in (64, 448):
+            for k in range(3):
+                t = (phase + k / 3.0) % 1.0
+                py = 120 + t * 160
+                add_glow(img, (sc(px), sc(py)), sc(8), (90, 240, 225), 95, sc(5))
+                d.rounded_rectangle([sc(px - 4), sc(py - 5), sc(px + 4), sc(py + 5)],
+                                    radius=sc(2), fill=(214, 255, 248, 235))
+
+    # small drive gears flanking the flywheel
+    for gx, gy, gr, teeth, spin in (
+        (cx - sc(96), cy + sc(64), sc(24), 12, -angle),
+        (cx + sc(96), cy + sc(64), sc(24), 12, -angle),
+    ):
+        pts = gear_polygon(gx, gy, gr * 0.80, gr, teeth, spin)
+        gmask = mask_polygon(size, [(int(round(x)), int(round(y))) for x, y in pts])
+        img.paste(vgrad(size, [(0.0, steel_hi), (0.35, steel_mid), (1.0, steel_dark)]),
+                  (0, 0), gmask)
+        d = ImageDraw.Draw(img)
+        d.polygon([(int(round(x)), int(round(y))) for x, y in pts],
+                  outline=(8, 12, 18, 240))
+        hub = sc(8)
+        d.ellipse([gx - hub, gy - hub, gx + hub, gy + hub],
+                  fill=(36, 48, 64, 255), outline=bronze_hi, width=sc(1))
+
+    # flywheel: toothed outer ring
+    fly_r_root = sc(68)
+    fly_r_tip = sc(78)
+    fly_pts = gear_polygon(cx, cy, fly_r_root, fly_r_tip, 24, angle)
+    fly_mask = mask_polygon(size, [(int(round(x)), int(round(y))) for x, y in fly_pts])
+    fly_inner = mask_ellipse(size, [cx - sc(58), cy - sc(58), cx + sc(58), cy + sc(58)])
+    fly_ring = ImageChops.subtract(fly_mask, fly_inner)
+    ring_fill = radial(
+        size, (cx, cy), fly_r_tip,
+        [(0.0, (0, 0, 0, 0)), (0.80, (54, 70, 88, 255)),
+         (0.90, (154, 180, 206, 255)), (1.0, (18, 25, 34, 255))],
+    )
+    img.paste(ring_fill, (0, 0), fly_ring)
+    d = ImageDraw.Draw(img)
+    d.polygon([(int(round(x)), int(round(y))) for x, y in fly_pts],
+              outline=(6, 9, 13, 255), width=sc(2))
+
+    # six tapered spokes
+    for i in range(6):
+        a = angle + 2 * math.pi * i / 6
+        nx, ny = math.cos(a), math.sin(a)
+        px, py = -ny, nx
+        w0, w1 = sc(7), sc(4)
+        r0, r1 = sc(26), sc(64)
+        pts = [
+            (cx + nx * r0 + px * w0, cy + ny * r0 + py * w0),
+            (cx + nx * r1 + px * w1, cy + ny * r1 + py * w1),
+            (cx + nx * r1 - px * w1, cy + ny * r1 - py * w1),
+            (cx + nx * r0 - px * w0, cy + ny * r0 - py * w0),
+        ]
+        smask = mask_polygon(size, [(int(round(x)), int(round(y))) for x, y in pts])
+        img.paste(vgrad(size, [(0.0, (144, 168, 194, 255)), (0.45, (78, 96, 118, 255)),
+                               (1.0, (24, 34, 46, 255))]), (0, 0), smask)
+        d = ImageDraw.Draw(img)
+        d.polygon([(int(round(x)), int(round(y))) for x, y in pts],
+                  outline=(7, 10, 15, 220))
+
+    # flywheel hub
+    hub_r = sc(30)
+    hub_mask = mask_ellipse(size, [cx - hub_r, cy - hub_r, cx + hub_r, cy + hub_r])
+    img.paste(vgrad(size, [(0.0, (96, 116, 138, 255)), (0.45, (48, 62, 80, 255)),
+                           (1.0, (18, 25, 34, 255))]), (0, 0), hub_mask)
+    d = ImageDraw.Draw(img)
+    d.ellipse([cx - hub_r, cy - hub_r, cx + hub_r, cy + hub_r],
+              outline=(6, 9, 13, 255), width=sc(2))
+    d.ellipse([cx - hub_r + sc(4), cy - hub_r + sc(4),
+               cx + hub_r - sc(4), cy + hub_r - sc(4)],
+              outline=(206, 172, 110, 130), width=sc(1))
+    for i in range(6):
+        a = angle + 2 * math.pi * i / 6
+        bx = cx + math.cos(a) * sc(21)
+        by = cy + math.sin(a) * sc(21)
+        d.ellipse([bx - sc(3), by - sc(3), bx + sc(3), by + sc(3)],
+                  fill=(30, 40, 54, 255), outline=(198, 216, 234, 110), width=sc(1))
+
+    # small glowing anti-entropy core in the middle of the hub
+    core_r = sc(12)
+    core_mask = mask_ellipse(size, [cx - core_r, cy - core_r, cx + core_r, cy + core_r])
+    img.paste(radial(size, (cx, cy), core_r,
+                     [(0.0, (235, 255, 252, 255)), (0.45, (110, 236, 228, 255)),
+                      (1.0, (12, 92, 102, 255))]), (0, 0), core_mask)
+    if not dim:
+        add_glow(img, (cx, cy), sc(20), (100, 245, 232), int(55 + 35 * pulse), sc(6))
+
+    # crank pin and the two horizontal pistons
+    pin_x = cx + math.cos(angle) * sc(43)
+    pin_y = cy + math.sin(angle) * sc(43)
+    left_cross = sc(158) + sc(14) * (0.5 + 0.5 * math.cos(angle))
+    right_cross = sc(354) - sc(14) * (0.5 - 0.5 * math.cos(angle))
+
+    for hx0, hx1 in ((sc(74), sc(154)), (sc(358), sc(438))):
+        hbox = [hx0, cy - sc(25), hx1, cy + sc(25)]
+        hmask = mask_rrect(size, hbox, sc(7))
+        img.paste(vgrad(size, [(0.0, (150, 174, 198, 255)), (0.28, (88, 106, 128, 255)),
+                               (0.75, (42, 56, 72, 255)), (1.0, (18, 25, 34, 255))]),
+                  (0, 0), hmask)
+        d = ImageDraw.Draw(img)
+        d.rounded_rectangle(hbox, radius=sc(7), outline=(6, 9, 13, 255), width=sc(2))
+        for ry in (cy - sc(14), cy, cy + sc(14)):
+            d.line([hx0 + sc(4), ry, hx1 - sc(4), ry],
+                   fill=(0, 0, 0, 80), width=sc(1))
+            d.line([hx0 + sc(4), ry + sc(1), hx1 - sc(4), ry + sc(1)],
+                   fill=(190, 214, 236, 35), width=sc(1))
+        for bx in (hx0 + sc(7), hx1 - sc(7)):
+            for by in (cy - sc(16), cy + sc(16)):
+                d.ellipse([bx - sc(2), by - sc(2), bx + sc(2), by + sc(2)],
+                          fill=(32, 44, 58, 255), outline=(190, 212, 232, 80), width=sc(1))
+
+    # piston rods and crossheads
+    d = ImageDraw.Draw(img)
+    for cross_x, inner_x in ((left_cross, sc(154)), (right_cross, sc(358))):
+        d.line([inner_x, cy, cross_x, cy], fill=(18, 26, 36, 255), width=sc(9))
+        d.line([inner_x, cy - sc(1), cross_x, cy - sc(1)],
+               fill=(190, 214, 236, 120), width=sc(2))
+        cbox = [cross_x - sc(8), cy - sc(17), cross_x + sc(8), cy + sc(17)]
+        cmask = mask_rrect(size, cbox, sc(3))
+        img.paste(vgrad(size, [(0.0, (164, 188, 212, 255)), (1.0, (54, 70, 88, 255))]),
+                  (0, 0), cmask)
+        d.rounded_rectangle(cbox, radius=sc(3), outline=(6, 9, 13, 255), width=sc(2))
+
+    # connecting rods are drawn last so they sit above the flywheel
+    for cross_x in (left_cross, right_cross):
+        d.line([cross_x, cy, pin_x, pin_y], fill=(16, 24, 34, 255), width=sc(13))
+        d.line([cross_x, cy, pin_x, pin_y], fill=(92, 112, 136, 255), width=sc(8))
+        d.line([cross_x, cy - sc(1), pin_x, pin_y - sc(1)],
+               fill=(206, 228, 248, 90), width=sc(2))
+        for bx, by in ((cross_x, cy), (pin_x, pin_y)):
+            d.ellipse([bx - sc(7), by - sc(7), bx + sc(7), by + sc(7)],
+                      fill=bronze_mid, outline=(34, 24, 12, 255), width=sc(2))
+            d.ellipse([bx - sc(3), by - sc(3), bx + sc(3), by + sc(3)],
+                      fill=(66, 46, 24, 255), outline=(255, 232, 188, 90), width=sc(1))
+
+    # pressure gauges
+    for gx, gy in ((sc(112), sc(266)), (sc(400), sc(266))):
+        gauge_r = sc(18)
+        d = ImageDraw.Draw(img)
+        d.ellipse([gx - gauge_r - sc(3), gy - gauge_r - sc(3),
+                   gx + gauge_r + sc(3), gy + gauge_r + sc(3)],
+                  fill=(0, 0, 0, 80))
+        d.ellipse([gx - gauge_r, gy - gauge_r, gx + gauge_r, gy + gauge_r],
+                  fill=(44, 56, 72, 255), outline=(214, 178, 112, 200), width=sc(2))
+        dial_r = sc(14)
+        d.ellipse([gx - dial_r, gy - dial_r, gx + dial_r, gy + dial_r],
+                  fill=(224, 218, 196, 255), outline=(8, 12, 18, 230), width=sc(1))
+        for i in range(9):
+            a = math.radians(210 + i * 30)
+            d.line([gx + math.cos(a) * sc(14), gy + math.sin(a) * sc(14),
+                    gx + math.cos(a) * sc(10), gy + math.sin(a) * sc(10)],
+                   fill=(42, 36, 28, 220), width=sc(1))
+        needle = math.radians(210 + 120 * (0.5 + 0.5 * math.sin(angle * 2)))
+        d.line([gx, gy, gx + math.cos(needle) * sc(11), gy + math.sin(needle) * sc(11)],
+               fill=(178, 34, 28, 255), width=sc(2))
+        d.ellipse([gx - sc(3), gy - sc(3), gx + sc(3), gy + sc(3)],
+                  fill=(38, 32, 24, 255), outline=(230, 206, 154, 160), width=sc(1))
+
+    # exhaust steam above the heat-sink when working
+    if working and not dim:
+        for i in range(4):
+            t = (phase + i * 0.25) % 1.0
+            px = 256 + 24 * math.sin(2 * math.pi * (phase + i * 0.37))
+            py = 116 - t * 62
+            alpha = int(48 * (1.0 - t))
+            if alpha > 0:
+                puff = radial(
+                    size, (sc(px), sc(py)), sc(15 + 9 * t),
+                    [(0.0, (232, 248, 255, alpha)),
+                     (0.55, (198, 226, 242, alpha // 2)),
+                     (1.0, (0, 0, 0, 0))],
+                )
+                img.alpha_composite(puff)
+
     # --- bottom exhaust grille ------------------------------------------
     frame_box = [sc(86), sc(296), sc(426), sc(338)]
     frame_mask = mask_rrect(size, frame_box, sc(8))
@@ -840,17 +1043,21 @@ def draw_frame(index: int, dim: bool = False) -> Image.Image:
             pts = [(ax + hw, ay - hh), (ax - hw, ay), (ax + hw, ay + hh)]
         ImageDraw.Draw(img).polygon(pts, fill=(240, 252, 255, 245))
 
-    draw_port((-8, 290, 40, 348), (78, 168, 232, 255), (28, 84, 140, 255),
+    # Port graphics are centred on the connector cell centres. For a 4-wide building the
+    # origin cell is the second column from the left, so the cells are at frame x = 64 and
+    # x = 448. The liquid row centre is y = 320, the gas row centre is y = 64, and the
+    # power socket is the centre of the bottom row (x = 192, y = 320).
+    draw_port((40, 296, 88, 344), (78, 168, 232, 255), (28, 84, 140, 255),
               (150, 218, 255, 230), +1, (80, 170, 240))
-    draw_port((472, 290, 520, 348), (78, 168, 232, 255), (28, 84, 140, 255),
+    draw_port((424, 296, 472, 344), (78, 168, 232, 255), (28, 84, 140, 255),
               (150, 218, 255, 230), +1, (80, 170, 240))
-    draw_port((-8, 40, 40, 98), (78, 220, 196, 255), (24, 116, 106, 255),
+    draw_port((40, 40, 88, 88), (78, 220, 196, 255), (24, 116, 106, 255),
               (150, 255, 236, 230), +1, (80, 235, 210))
-    draw_port((472, 40, 520, 98), (78, 220, 196, 255), (24, 116, 106, 255),
+    draw_port((424, 40, 472, 88), (78, 220, 196, 255), (24, 116, 106, 255),
               (150, 255, 236, 230), +1, (80, 235, 210))
 
-    # power port
-    px0, py0, px1, py1 = 164, 346, 222, 386
+    # power port (bottom-row centre)
+    px0, py0, px1, py1 = 164, 292, 220, 348
     ph = [sc(px0 - 4), sc(py0 - 4), sc(px1 + 4), sc(py1 + 4)]
     ph_mask = mask_rrect(size, ph, sc(10))
     ph_fill = vgrad(size, [(0.0, (70, 58, 30, 255)), (0.5, (44, 35, 18, 255)),
@@ -865,10 +1072,10 @@ def draw_frame(index: int, dim: bool = False) -> Image.Image:
     img.paste(ps_fill, (0, 0), ps_mask)
     d.rounded_rectangle(ps, radius=sc(6), outline=(255, 238, 170, 235), width=sc(2))
     if not dim:
-        add_glow(img, (sc(193), sc(366)), sc(22), (255, 200, 80), 80, sc(8))
+        add_glow(img, (sc(192), sc(320)), sc(22), (255, 200, 80), 80, sc(8))
     bolt = [
-        (sc(200), sc(352)), (sc(186), sc(368)), (sc(194), sc(368)),
-        (sc(189), sc(382)), (sc(205), sc(363)), (sc(197), sc(363)),
+        (sc(200), sc(298)), (sc(186), sc(314)), (sc(194), sc(314)),
+        (sc(189), sc(328)), (sc(205), sc(309)), (sc(197), sc(309)),
     ]
     d.polygon(bolt, fill=(255, 244, 188, 255))
 
@@ -1157,6 +1364,44 @@ def draw_icon() -> Image.Image:
               fill=(255, 255, 253, 255))
     add_glow(img, (cx, cy), sc(14), (185, 255, 247), 85, sc(4))
 
+    # mechanical flywheel over the energy core
+    gear_pts = gear_polygon(cx, cy, sc(52), sc(61), 16, 0.10)
+    gear_mask = mask_polygon(size, [(int(round(x)), int(round(y))) for x, y in gear_pts])
+    gear_inner = mask_ellipse(size, [cx - sc(44), cy - sc(44), cx + sc(44), cy + sc(44)])
+    gear_ring = ImageChops.subtract(gear_mask, gear_inner)
+    img.paste(radial(size, (cx, cy), sc(61),
+                     [(0.0, (0, 0, 0, 0)), (0.78, (58, 74, 92, 255)),
+                      (0.90, (160, 184, 208, 255)), (1.0, (18, 25, 34, 255))]),
+              (0, 0), gear_ring)
+    d = ImageDraw.Draw(img)
+    d.polygon([(int(round(x)), int(round(y))) for x, y in gear_pts],
+              outline=(6, 9, 13, 255), width=sc(1))
+    for i in range(6):
+        a = 0.10 + 2 * math.pi * i / 6
+        nx, ny = math.cos(a), math.sin(a)
+        px, py = -ny, nx
+        w0, w1 = sc(3), sc(2)
+        r0, r1 = sc(14), sc(46)
+        pts = [
+            (cx + nx * r0 + px * w0, cy + ny * r0 + py * w0),
+            (cx + nx * r1 + px * w1, cy + ny * r1 + py * w1),
+            (cx + nx * r1 - px * w1, cy + ny * r1 - py * w1),
+            (cx + nx * r0 - px * w0, cy + ny * r0 - py * w0),
+        ]
+        smask = mask_polygon(size, [(int(round(x)), int(round(y))) for x, y in pts])
+        img.paste(vgrad(size, [(0.0, (148, 172, 198, 255)), (1.0, (30, 42, 56, 255))]),
+                  (0, 0), smask)
+    hub_r = sc(17)
+    hub_mask = mask_ellipse(size, [cx - hub_r, cy - hub_r, cx + hub_r, cy + hub_r])
+    img.paste(vgrad(size, [(0.0, (104, 124, 146, 255)), (1.0, (24, 34, 46, 255))]),
+              (0, 0), hub_mask)
+    d.ellipse([cx - hub_r, cy - hub_r, cx + hub_r, cy + hub_r],
+              outline=(214, 178, 112, 190), width=sc(1))
+    core_r = sc(8)
+    d.ellipse([cx - core_r, cy - core_r, cx + core_r, cy + core_r],
+              fill=(168, 255, 246, 255), outline=(255, 255, 255, 220), width=sc(1))
+    add_glow(img, (cx, cy), sc(18), (100, 245, 232), 70, sc(4))
+
     # orbiting satellites
     for i in range(6):
         a = 2 * math.pi * i / 6 + 0.35
@@ -1280,7 +1525,7 @@ def anim_bytes(world_uvs, off_uv, ui_uv) -> bytes:
     out += struct.pack("<i", 5)
     out += struct.pack("<i", 0)
     out += struct.pack("<i", 0)
-    out += struct.pack("<i", 4)  # animations
+    out += struct.pack("<i", 5)  # animations
 
     def element(symbol_hash: int, frame: int) -> bytes:
         b = bytearray()
@@ -1293,21 +1538,24 @@ def anim_bytes(world_uvs, off_uv, ui_uv) -> bytes:
         b += struct.pack("<f", 0.0)
         return bytes(b)
 
-    def animation(name: str, symbol_hash: int, bounds, frame_count: int, use_frames: bool) -> None:
+    def animation(name: str, symbol_hash: int, bounds, frame_count: int,
+                  use_frames: bool, frame_rate: float) -> None:
         nonlocal out
         out += kstring(name)
         out += struct.pack("<i", symbol_hash)
-        out += struct.pack("<f", 6.0)
+        out += struct.pack("<f", frame_rate)
         out += struct.pack("<i", frame_count)
         for i in range(frame_count):
             out += struct.pack("<4f", *bounds)
             out += struct.pack("<i", 1)
             out += element(symbol_hash, i if use_frames else 0)
 
-    animation("idle", world, WORLD_BOUNDS, COUNT, True)
-    animation("off", off, WORLD_BOUNDS, 1, False)
-    animation("place", place, WORLD_BOUNDS, 1, False)
-    animation("ui", ui, UI_BOUNDS, 1, False)
+    # 8 mechanical frames at 10 fps: one flywheel revolution per loop.
+    animation("working", world, WORLD_BOUNDS, COUNT, True, 10.0)
+    animation("idle", world, WORLD_BOUNDS, 1, False, 6.0)
+    animation("off", off, WORLD_BOUNDS, 1, False, 6.0)
+    animation("place", place, WORLD_BOUNDS, 1, False, 6.0)
+    animation("ui", ui, UI_BOUNDS, 1, False, 6.0)
 
     strings = [(world, WORLD_NAME), (off, OFF_NAME), (place, PLACE_NAME), (ui, UI_NAME)]
     out += struct.pack("<i", 0)
@@ -1344,7 +1592,7 @@ def main() -> None:
             )
         )
 
-    off_image = draw_frame(0, dim=True)
+    off_image = draw_frame(0, dim=True, working=False)
     off_x = 0
     off_y = world_h
     atlas.paste(off_image, (off_x, off_y))

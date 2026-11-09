@@ -51,13 +51,16 @@ namespace AntiEntropyGenerator
 
         private PrimaryElement primaryElement;
         private Overheatable overheatable;
+        private EnergyConsumerSelfSustaining gridConsumer;
         private HandleVector<int>.Handle structureTemperature;
         private ISliderControl[] sliders;
         private bool tooHotLatched;
+        private bool gridPowerStarved;
 
         private float lastGrossWatts;
         private float lastConsumptionWatts;
         private float lastNetWatts;
+        private float lastGridDrawWatts;
         private float lastHeatKw;
         private float lastLiquidHeatKw;
         private float lastGasHeatKw;
@@ -70,6 +73,17 @@ namespace AntiEntropyGenerator
             base.OnSpawn();
             primaryElement = GetComponent<PrimaryElement>();
             overheatable = GetComponent<Overheatable>();
+            gridConsumer = GetComponent<EnergyConsumerSelfSustaining>();
+            if (gridConsumer != null)
+            {
+                // Start self-sustained so the generator can bootstrap on an empty circuit
+                // when its own output covers the cooler load. Process() switches this off
+                // when external power is needed.
+                gridConsumer.SetSustained(true);
+                gridConsumer.BaseWattageRating = 0f;
+                gridConsumer.UpdatePoweredStatus();
+            }
+
             structureTemperature = GameComps.StructureTemperatures.GetHandle(gameObject);
             sliders = new ISliderControl[]
             {
@@ -90,7 +104,22 @@ namespace AntiEntropyGenerator
             if (!operational.IsOperational)
             {
                 operational.SetActive(false);
-                ResetLastValues();
+
+                // If the previous tick needed grid power and did not get it, clear any
+                // leftover joules so the machine cannot quietly self-power the deficit.
+                gridPowerStarved =
+                    gridConsumer != null
+                    && lastGridDrawWatts > 0.01f
+                    && !gridConsumer.IsExternallyPowered;
+
+                if (gridPowerStarved)
+                {
+                    ConsumeEnergy(JoulesAvailable);
+                }
+
+                // Keep the last grid-draw value visible while starved, so the descriptor
+                // explains why the building stopped.
+                ResetLastValues(keepGridDraw: gridPowerStarved);
                 return;
             }
 
@@ -115,11 +144,16 @@ namespace AntiEntropyGenerator
             operational.SetFlag(tooHotFlag, !tooHotLatched);
         }
 
-        private void ResetLastValues()
+        private void ResetLastValues(bool keepGridDraw = false)
         {
             lastGrossWatts = 0f;
             lastConsumptionWatts = 0f;
             lastNetWatts = 0f;
+            if (!keepGridDraw)
+            {
+                lastGridDrawWatts = 0f;
+            }
+
             lastHeatKw = 0f;
             lastLiquidHeatKw = 0f;
             lastGasHeatKw = 0f;
@@ -127,10 +161,13 @@ namespace AntiEntropyGenerator
 
         private void Process(float dt)
         {
+            gridPowerStarved = false;
             float liquidHeat = 0f;
             float gasHeat = 0f;
-            float liquidFraction = 0f;
-            float gasFraction = 0f;
+            float liquidHeatFraction = 0f;
+            float gasHeatFraction = 0f;
+            float liquidFlowFraction = 0f;
+            float gasFlowFraction = 0f;
             bool anyCooling = false;
 
             ProcessMedium(
@@ -139,7 +176,8 @@ namespace AntiEntropyGenerator
                 ConduitType.Liquid,
                 LIQUID_FLOW_KG_S,
                 ref liquidHeat,
-                ref liquidFraction,
+                ref liquidHeatFraction,
+                ref liquidFlowFraction,
                 ref anyCooling,
                 dt);
 
@@ -149,24 +187,41 @@ namespace AntiEntropyGenerator
                 ConduitType.Gas,
                 GAS_FLOW_KG_S,
                 ref gasHeat,
-                ref gasFraction,
+                ref gasHeatFraction,
+                ref gasFlowFraction,
                 ref anyCooling,
                 dt);
 
+            // Generation follows the heat actually removed. Cooler power follows the volume
+            // actually processed: running near the minimum temperature can therefore cost more
+            // than the machine generates, and the deficit is drawn from the grid.
             float gross = Mathf.Min(
                 MAX_WATTAGE,
-                WATTAGE_PER_MEDIUM * (liquidFraction + gasFraction));
+                WATTAGE_PER_MEDIUM * (liquidHeatFraction + gasHeatFraction));
             float consumption =
-                LIQUID_COOLER_WATTS * liquidFraction +
-                GAS_COOLER_WATTS * gasFraction;
+                LIQUID_COOLER_WATTS * liquidFlowFraction +
+                GAS_COOLER_WATTS * gasFlowFraction;
             float net = Mathf.Max(0f, gross - consumption);
+            float gridDraw = Mathf.Max(0f, consumption - gross);
             float coolerHeat = liquidHeat + gasHeat;
 
             operational.SetActive(anyCooling);
 
-            if (net > 0f && dt > 0f)
+            // Feed the full gross output into the circuit. The hidden EnergyConsumer below
+            // draws the cooler load back out: when gross >= load the surplus stays available
+            // to the grid, and when gross < load the deficit is taken from batteries or other
+            // generators. If nothing can cover the deficit the consumer reports Unpowered,
+            // which makes the building non-operational until the grid can supply it.
+            if (gridConsumer != null)
             {
-                GenerateJoules(net * dt);
+                gridConsumer.BaseWattageRating = consumption;
+                gridConsumer.SetSustained(gridDraw <= 0.01f);
+                gridConsumer.UpdatePoweredStatus();
+            }
+
+            if (gross > 0f && dt > 0f)
+            {
+                GenerateJoules(gross * dt);
             }
 
             // Heat removed by the coolers is added to the building itself. The 4 kW steam
@@ -184,6 +239,7 @@ namespace AntiEntropyGenerator
             lastGrossWatts = gross;
             lastConsumptionWatts = consumption;
             lastNetWatts = net;
+            lastGridDrawWatts = gridDraw;
             lastLiquidHeatKw = liquidHeat;
             lastGasHeatKw = gasHeat;
             lastHeatKw = anyCooling ? coolerHeat + STEAM_TURBINE_SELF_HEAT_KW : 0f;
@@ -195,7 +251,8 @@ namespace AntiEntropyGenerator
             ConduitType type,
             float nominalFlow,
             ref float heat,
-            ref float fraction,
+            ref float heatFraction,
+            ref float flowFraction,
             ref bool anyCooling,
             float dt)
         {
@@ -235,6 +292,8 @@ namespace AntiEntropyGenerator
                     break;
                 }
 
+                flowFraction += amount / (nominalFlow * dt);
+
                 float temperature = element.Temperature;
 
                 // The minimum temperature is a floor. A medium above it is cooled by the
@@ -267,7 +326,7 @@ namespace AntiEntropyGenerator
                     float referenceHeat = nominalFlow * specificHeat * BASE_DELTA_C;
                     if (referenceHeat > 0.0001f)
                     {
-                        fraction += removedHeat / referenceHeat;
+                        heatFraction += removedHeat / referenceHeat;
                     }
                 }
 
@@ -315,6 +374,8 @@ namespace AntiEntropyGenerator
 
                 remaining -= amount;
             }
+
+            flowFraction = Mathf.Clamp01(flowFraction);
         }
 
         public List<Descriptor> GetDescriptors(GameObject go)
@@ -336,6 +397,21 @@ namespace AntiEntropyGenerator
                 string.Format(STRINGS.UI.ANTIENTROPY.NET_OUTPUT_STATUS,
                     GameUtil.GetFormattedWattage(lastNetWatts)),
                 STRINGS.UI.ANTIENTROPY.NET_OUTPUT_STATUS_TOOLTIP));
+
+            if (lastGridDrawWatts > 0.01f)
+            {
+                bool starved = gridPowerStarved
+                    || (gridConsumer != null && !gridConsumer.IsPowered);
+                descriptors.Add(new Descriptor(
+                    string.Format(
+                        starved
+                            ? STRINGS.UI.ANTIENTROPY.GRID_STARVED_STATUS
+                            : STRINGS.UI.ANTIENTROPY.GRID_DRAW_STATUS,
+                        GameUtil.GetFormattedWattage(lastGridDrawWatts)),
+                    starved
+                        ? STRINGS.UI.ANTIENTROPY.GRID_STARVED_STATUS_TOOLTIP
+                        : STRINGS.UI.ANTIENTROPY.GRID_DRAW_STATUS_TOOLTIP));
+            }
 
             descriptors.Add(new Descriptor(
                 string.Format(STRINGS.UI.ANTIENTROPY.HEAT_STATUS,

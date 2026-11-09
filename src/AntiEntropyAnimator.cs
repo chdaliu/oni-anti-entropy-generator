@@ -3,11 +3,14 @@ using UnityEngine;
 namespace AntiEntropyGenerator
 {
     /// <summary>
-    /// Runtime animation controller: switches between idle and off based on
-    /// Operational.IsActive.
+    /// Runtime animation controller: switches between the mechanical working loop and the
+    /// powered-down state based on Operational.IsActive.
     /// </summary>
     public sealed class AntiEntropyAnimator : KMonoBehaviour
     {
+        private const string WORKING_ANIM = "working";
+        private const string OFF_ANIM = "off";
+
         private KBatchedAnimController anim;
         private Operational operational;
 
@@ -17,16 +20,16 @@ namespace AntiEntropyGenerator
             anim = GetComponent<KBatchedAnimController>();
             operational = GetComponent<Operational>();
 
-            if (anim != null)
-            {
-                bool active = operational != null && operational.IsActive;
-                anim.Play(active ? "idle" : "off", KAnim.PlayMode.Loop);
-            }
-
+            PlayCurrentState();
             Subscribe(824508782, OnActiveChanged);
         }
 
         private void OnActiveChanged(object data)
+        {
+            PlayCurrentState();
+        }
+
+        private void PlayCurrentState()
         {
             if (anim == null)
             {
@@ -34,7 +37,7 @@ namespace AntiEntropyGenerator
             }
 
             bool active = operational != null && operational.IsActive;
-            anim.Play(active ? "idle" : "off", KAnim.PlayMode.Loop);
+            anim.Play(active ? WORKING_ANIM : OFF_ANIM, KAnim.PlayMode.Loop);
         }
     }
 }

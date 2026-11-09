@@ -52,7 +52,15 @@ namespace AntiEntropyGenerator
 
                 public static LocString NET_OUTPUT_STATUS = "净输出：{0}";
                 public static LocString NET_OUTPUT_STATUS_TOOLTIP =
-                    "净输出 = 当前发电 - 散热器耗电。净输出为 0 时机器仍会冷却，但不再向外供电。";
+                    "净输出 = 当前发电 - 散热器耗电。当前发电足够时，剩余电力送入电网。";
+
+                public static LocString GRID_DRAW_STATUS = "电网取电：{0}";
+                public static LocString GRID_DRAW_STATUS_TOOLTIP =
+                    "当前发电不足以支付散热器耗电，差额从电网（电池或其他发电机）补足。";
+
+                public static LocString GRID_STARVED_STATUS = "电网供电不足：缺少 {0}";
+                public static LocString GRID_STARVED_STATUS_TOOLTIP =
+                    "散热器需要的电力超过发电量与电网可供电力之和，机器停止工作，直到电网能够补足差额。";
 
                 public static LocString HEAT_STATUS = "总发热：{0}";
                 public static LocString HEAT_STATUS_TOOLTIP =

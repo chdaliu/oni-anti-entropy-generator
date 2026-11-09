@@ -19,14 +19,20 @@ namespace AntiEntropyGenerator
 
         // Do not gate the building behind any DLC. It must load in vanilla, single-DLC,
         // partial-DLC and mixed-DLC saves.
+        //
+        // Return null rather than an empty array: BuildingDef.PostProcess copies these into the
+        // TechItem, and ResearchEntry.SetTech treats a non-null array as "this item has DLC
+        // restrictions" and indexes requiredDlcIds[Length - 1]. An empty array therefore causes
+        // an IndexOutOfRangeException while the research screen spawns (the NRE cascade that
+        // makes a world fail to load after the mod is enabled).
         public override string[] GetRequiredDlcIds()
         {
-            return new string[0];
+            return null;
         }
 
         public override string[] GetForbiddenDlcIds()
         {
-            return new string[0];
+            return null;
         }
 
         public override BuildingDef CreateBuildingDef()
@@ -46,11 +52,15 @@ namespace AntiEntropyGenerator
                 TUNING.NOISE_POLLUTION.NONE,
                 1f);
 
-            // Power: one output port in the middle of the bottom row.
+            // Power: one bidirectional port in the middle of the bottom row. The same cell
+            // is used as the generator output and as the hidden energy-consumer input, so a
+            // single wire both exports surplus power and supplies the cooler deficit.
             def.GeneratorWattageRating = AntiEntropyGeneratorCore.MAX_WATTAGE;
             def.GeneratorBaseCapacity = AntiEntropyGeneratorCore.MAX_WATTAGE;
             def.RequiresPowerOutput = true;
-            def.PowerOutputOffset = new CellOffset(1, 0);
+            def.PowerOutputOffset = new CellOffset(0, 0);
+            def.RequiresPowerInput = false; // the EnergyConsumer is added manually in ConfigureComplete
+            def.PowerInputOffset = new CellOffset(0, 0);
             def.EnergyConsumptionWhenActive = 0f;
 
             // Steam-turbine self heat. The cooler heat is added to the structure at runtime.
@@ -78,7 +88,7 @@ namespace AntiEntropyGenerator
             def.AudioCategory = "Metal";
             def.AudioSize = "large";
             def.PermittedRotations = PermittedRotations.Unrotatable;
-            def.DefaultAnimState = "idle";
+            def.DefaultAnimState = "working";
             def.BaseTimeUntilRepair = -1f;
             def.ViewMode = OverlayModes.Power.ID;
 
@@ -95,7 +105,36 @@ namespace AntiEntropyGenerator
             go.GetComponent<KPrefabID>().AddTag(RoomConstraints.ConstraintTags.PowerBuilding);
             go.GetComponent<KPrefabID>().AddTag(RoomConstraints.ConstraintTags.GeneratorType);
             go.GetComponent<KPrefabID>().AddTag(RoomConstraints.ConstraintTags.HeavyDutyGeneratorType);
+        }
 
+        public override void DoPostConfigureComplete(GameObject go)
+        {
+            // Runtime components belong on the completed building only. Adding them during
+            // ConfigureBuildingTemplate would also place them on the construction template;
+            // BuildingLoader.CreateBuildingComplete then removes one of the two ConduitConsumers
+            // because BuildingDef.InputConduitType is None (the ports are secondary ports), which
+            // silently disables one of the two inputs.
+            ConfigureComplete(go);
+
+            go.AddOrGet<AntiEntropyAnimator>();
+
+            // Keep the standard prioritizable entry for generator-like buildings, even though
+            // this building has no duplicant-operated errands.
+            Prioritizable.AddRef(go);
+        }
+
+        public override void DoPostConfigurePreview(BuildingDef def, GameObject go)
+        {
+            AddPortIndicators(go);
+        }
+
+        public override void DoPostConfigureUnderConstruction(GameObject go)
+        {
+            AddPortIndicators(go);
+        }
+
+        private static void ConfigureComplete(GameObject go)
+        {
             // Four independent buffers: liquid in/out and gas in/out.
             Storage liquidIn = AddStorage(go, 100f, STORAGEFILTERS.LIQUIDS);
             Storage liquidOut = AddStorage(go, 100f, STORAGEFILTERS.LIQUIDS);
@@ -128,6 +167,12 @@ namespace AntiEntropyGenerator
             ConduitDispenser gasDispenser = go.AddComponent<ConduitDispenser>();
             ConfigureDispenser(gasDispenser, ConduitType.Gas, gasOut, useSecondary: true);
 
+            // Draws the cooler deficit from the grid. It shares the generator's power cell,
+            // so no extra wire connection is needed. The core drives BaseWattageRating and
+            // toggles SetSustained depending on whether the generator covers the whole load.
+            EnergyConsumerSelfSustaining gridConsumer = go.AddOrGet<EnergyConsumerSelfSustaining>();
+            gridConsumer.powerSortOrder = 0;
+
             AntiEntropyGeneratorCore core = go.AddOrGet<AntiEntropyGeneratorCore>();
             core.liquidInputStorage = liquidIn;
             core.liquidOutputStorage = liquidOut;
@@ -135,13 +180,24 @@ namespace AntiEntropyGenerator
             core.gasOutputStorage = gasOut;
         }
 
-        public override void DoPostConfigureComplete(GameObject go)
+        /// <summary>
+        /// Preview and under-construction buildings use a separate prefab, so they do not
+        /// inherit the completed building's port components. Attach lightweight port markers
+        /// so the pipe connectors are visible and placeable at every construction stage.
+        /// </summary>
+        private static void AddPortIndicators(GameObject go)
         {
-            go.AddOrGet<AntiEntropyAnimator>();
-
-            // Keep the standard prioritizable entry for generator-like buildings, even though
-            // this building has no duplicant-operated errands.
-            Prioritizable.AddRef(go);
+            // Building offsets are relative to the building origin, which for an even-width
+            // (4-cell) building is the second cell from the left: PlacementOffsets run from
+            // -1 to +2. The left/right ports must therefore use -1 and +2, not 0 and 3.
+            go.AddComponent<ConduitSecondaryInput>().portInfo =
+                new ConduitPortInfo(ConduitType.Liquid, new CellOffset(-1, 0));
+            go.AddComponent<ConduitSecondaryOutput>().portInfo =
+                new ConduitPortInfo(ConduitType.Liquid, new CellOffset(2, 0));
+            go.AddComponent<ConduitSecondaryInput>().portInfo =
+                new ConduitPortInfo(ConduitType.Gas, new CellOffset(-1, 2));
+            go.AddComponent<ConduitSecondaryOutput>().portInfo =
+                new ConduitPortInfo(ConduitType.Gas, new CellOffset(2, 2));
         }
 
         private static Storage AddStorage(GameObject go, float capacity, List<Tag> filters)
